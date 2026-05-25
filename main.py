@@ -68,4 +68,5 @@ if __name__ == "__main__":
     
     # Arrancamos el bot de Telegram
     print("Bot encendido...")
-    bot.infinity_polling()
+    bot.infinity_polling(allowed_updates=['message', 'edited_message', 'channel_post', 'edited_channel_post'])
+
