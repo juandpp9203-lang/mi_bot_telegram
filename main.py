@@ -28,9 +28,7 @@ chat_histories = {}
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
-    if str(message.chat.id) != str(ADMIN_ID):
-        return
-
+   
     chat_id = message.chat.id
     user_text = message.text
 
