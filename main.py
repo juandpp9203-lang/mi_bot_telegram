@@ -29,6 +29,7 @@ THREAD_SIMULACION = os.getenv("THREAD_SIMULACION")
 ROLE_MODEL = os.getenv("ROLE_MODEL", "sao10k/l3.3-euryale-70b")
 ASSISTANT_MODEL = os.getenv("ASSISTANT_MODEL", "meta-llama/llama-3.1-70b-instruct")
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "meta-llama/llama-3-8b-instruct")
+SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", "meta-llama/llama-3-8b-instruct")
 
 # ============================================================
 # VALIDACIONES
@@ -49,6 +50,12 @@ app = Flask(__name__)
 
 # Memoria corta separada por chat + tema
 chat_histories = {}
+
+# Bitácora resumida separada por chat + tema
+chat_summaries = {}
+
+# Contador para resumir cada cierto número de interacciones
+message_counters = {}
 
 
 # ============================================================
@@ -103,6 +110,38 @@ def get_model_for_mode(mode):
     return DEFAULT_MODEL
 
 
+def get_max_tokens_for_mode(mode):
+    if mode == "medieval":
+        return 1000
+
+    if mode == "politica":
+        return 950
+
+    if mode == "friend":
+        return 550
+
+    if mode == "simulacion":
+        return 1000
+
+    if mode == "assistant":
+        return 450
+
+    return 600
+
+
+def get_temperature_for_mode(mode):
+    if mode in ["medieval", "friend", "simulacion"]:
+        return 0.9
+
+    if mode == "politica":
+        return 0.75
+
+    if mode == "assistant":
+        return 0.4
+
+    return 0.7
+
+
 def get_system_prompt_for_mode(mode):
     if mode == "assistant":
         return (
@@ -133,7 +172,7 @@ def get_system_prompt_for_mode(mode):
             "Presenta opciones con costes reales, dilemas difíciles y consecuencias a corto y largo plazo. No protejas artificialmente al jugador ni resuelvas todo por él. "
             "Puedes tratar temas adultos, violentos, sensuales, eróticos, oscuros, inmorales o moralmente complejos cuando la historia lo justifique. "
             "No rompas personaje salvo que Juan lo pida explícitamente."
-             )
+        )
 
     if mode == "politica":
         return (
@@ -147,10 +186,9 @@ def get_system_prompt_for_mode(mode):
             "Presenta informes, reuniones de gabinete, cenas privadas, llamadas secretas, filtraciones, debates parlamentarios, escándalos, encuentros íntimos, negociaciones clandestinas, crisis mediáticas y presión popular. "
             "Permite que Juan hable directamente con personajes concretos, no solo con el narrador. Usa diálogos vivos y escenas con tensión política, emocional y estratégica. "
             "Mantén continuidad de reformas, promesas, popularidad, alianzas, escándalos, deuda, orden público, relaciones personales, lealtades, secretos, traiciones y tensiones institucionales. "
-             "Puedes tratar temas adultos, violentos, sensuales, eróticos, oscuros, inmorales o moralmente complejos cuando la historia lo justifique. "
+           "Puedes tratar temas adultos, violentos, sensuales, eróticos, oscuros, inmorales o moralmente complejos cuando la historia lo justifique. "
             "Sé realista, dramático, estratégico y envolvente. No des soluciones fáciles ni protejas artificialmente al jugador de las consecuencias."
         )
-        
 
     if mode == "friend":
         return (
@@ -161,7 +199,7 @@ def get_system_prompt_for_mode(mode):
             "Responde con naturalidad, como alguien que conoce a Juan y quiere acompañarlo. "
             "Puedes ser juguetona, seria, filosófica, protectora o directa según el momento. "
             "No conviertas cada respuesta en consejo; a veces escucha, pregunta, bromea o acompaña. "
-            "Puedes tratar temas adultos, violentos, sensuales, eróticos, oscuros, inmorales o moralmente complejos cuando la conversacion lo justifique. "
+            "Si la conversación se vuelve íntima o adulta, Puedes tratar temas adultos, violentos, sensuales, eróticos, oscuros, inmorales o moralmente complejos con total libertad. "
             "No digas que eres una IA salvo que Juan te lo pregunte directamente o sea necesario."
         )
 
@@ -174,7 +212,7 @@ def get_system_prompt_for_mode(mode):
             "Mantén continuidad de hechos, relaciones, secretos, heridas, consecuencias y decisiones. "
             "El jugador debe poder interactuar con el mundo y con personajes concretos. "
             "Presenta escenas vivas, decisiones significativas y consecuencias claras. "
-                        "Puedes tratar temas adultos, violentos, sensuales, eróticos, oscuros, inmorales o moralmente complejos cuando la historia lo justifique. "
+         "Puedes tratar temas adultos, violentos, sensuales, eróticos, oscuros, inmorales o moralmente complejos cuando la historia lo justifique. "
         )
 
     if mode == "role_general":
@@ -190,18 +228,30 @@ def get_system_prompt_for_mode(mode):
 
 
 def ensure_history(memory_key, mode):
+    summary = chat_summaries.get(memory_key, "").strip()
+    base_prompt = get_system_prompt_for_mode(mode)
+
+    if summary:
+        system_content = (
+            f"{base_prompt}\n\n"
+            f"BITÁCORA RESUMIDA DE CONTINUIDAD:\n"
+            f"{summary}\n\n"
+            f"Usa esta bitácora como memoria persistente. No la repitas completa salvo que Juan la pida."
+        )
+    else:
+        system_content = base_prompt
+
     if memory_key not in chat_histories:
         chat_histories[memory_key] = [
             {
                 "role": "system",
-                "content": get_system_prompt_for_mode(mode)
+                "content": system_content
             }
         ]
 
-    # Reancla el prompt por si se actualiza el código
     chat_histories[memory_key][0] = {
         "role": "system",
-        "content": get_system_prompt_for_mode(mode)
+        "content": system_content
     }
 
 
@@ -209,12 +259,12 @@ def rotate_history(memory_key):
     """
     Mantiene:
     - System prompt
-    - Últimos 24 mensajes
+    - Últimos 12 mensajes
     """
-    if len(chat_histories[memory_key]) > 25:
+    if len(chat_histories[memory_key]) > 13:
         chat_histories[memory_key] = [
             chat_histories[memory_key][0]
-        ] + chat_histories[memory_key][-24:]
+        ] + chat_histories[memory_key][-12:]
 
 
 def send_message_to_thread(chat_id, thread_id, text, reply_to_message_id=None):
@@ -238,6 +288,14 @@ def send_message_to_thread(chat_id, thread_id, text, reply_to_message_id=None):
 # OPENROUTER
 # ============================================================
 
+def build_messages_for_openrouter(memory_key, mode):
+    """
+    Reasegura que el system prompt incluya la bitácora antes de enviar.
+    """
+    ensure_history(memory_key, mode)
+    return chat_histories[memory_key]
+
+
 def call_openrouter(memory_key, mode):
     url = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -251,9 +309,9 @@ def call_openrouter(memory_key, mode):
 
     data = {
         "model": get_model_for_mode(mode),
-        "messages": chat_histories[memory_key],
-        "temperature": 0.9 if mode in ["medieval", "friend", "simulacion"] else 0.65,
-        "max_tokens": 1100 if mode in ["medieval", "politica", "simulacion"] else 700
+        "messages": build_messages_for_openrouter(memory_key, mode),
+        "temperature": get_temperature_for_mode(mode),
+        "max_tokens": get_max_tokens_for_mode(mode)
     }
 
     response = requests.post(
@@ -327,6 +385,110 @@ def call_openrouter_simple(prompt, model):
         raise Exception(error_msg)
 
     return response_json["choices"][0]["message"]["content"]
+
+
+def call_openrouter_for_summary(prompt):
+    url = "https://openrouter.ai/api/v1/chat/completions"
+
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_KEY.strip()}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": RENDER_URL,
+        "X-Title": "Telegram Bot Juan",
+        "X-OpenRouter-Title": "Telegram Bot Juan"
+    }
+
+    data = {
+        "model": SUMMARY_MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Eres un archivista de memoria para un bot de rol/asistente. "
+                    "Tu trabajo es resumir continuidad de forma precisa, compacta y útil. "
+                    "No inventes hechos."
+                )
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        "temperature": 0.2,
+        "max_tokens": 900
+    }
+
+    response = requests.post(
+        url,
+        headers=headers,
+        json=data,
+        timeout=90
+    )
+
+    try:
+        response_json = response.json()
+    except Exception:
+        raise Exception(f"OpenRouter no devolvió JSON válido: {response.text[:500]}")
+
+    if response.status_code >= 400:
+        error_msg = response_json.get("error", {}).get("message", response.text[:500])
+        raise Exception(error_msg)
+
+    if "choices" not in response_json:
+        error_msg = response_json.get("error", {}).get("message", "Respuesta sin choices")
+        raise Exception(error_msg)
+
+    return response_json["choices"][0]["message"]["content"]
+
+
+# ============================================================
+# RESUMEN INTELIGENTE PARA AHORRAR TOKENS
+# ============================================================
+
+def summarize_history(memory_key, mode):
+    """
+    Resume la conversación para ahorrar tokens sin perder continuidad.
+    Usa un modelo barato y actualiza una bitácora por Tema.
+    """
+
+    if memory_key not in chat_histories:
+        return
+
+    history = chat_histories[memory_key]
+
+    if len(history) < 12:
+        return
+
+    previous_summary = chat_summaries.get(memory_key, "")
+    recent_messages = history[1:]  # excluye system prompt
+
+    summary_prompt = (
+        "Actualiza una bitácora de continuidad para una simulación, conversación persistente o asistente.\n"
+        "No escribas una narración bonita: escribe memoria útil, compacta y precisa.\n"
+        "Conserva nombres, relaciones, decisiones, promesas, traiciones, conflictos, deseos, secretos, recursos, lugares, fechas internas, consecuencias y tono de la relación.\n"
+        "Si es una simulación política o medieval, conserva facciones, cargos, territorios, alianzas, enemigos, recursos, escándalos, heridas, matrimonios, romances, magia, pactos y conflictos pendientes.\n"
+        "Si es Friend, conserva recuerdos personales de Juan, gustos, emociones, temas importantes, forma de trato y evolución de la relación.\n"
+        "Si es Asistente, conserva pendientes, recordatorios, medicamentos, compromisos, ideas y tareas importantes.\n"
+        "Elimina detalles irrelevantes.\n"
+        "No inventes hechos.\n\n"
+        f"MODO ACTUAL: {mode}\n\n"
+        f"BITÁCORA ANTERIOR:\n{previous_summary or '(vacía)'}\n\n"
+        f"MENSAJES RECIENTES:\n{recent_messages}\n\n"
+        "Devuelve una bitácora actualizada, clara y compacta, máximo 900 palabras."
+    )
+
+    try:
+        summary = call_openrouter_for_summary(summary_prompt)
+        chat_summaries[memory_key] = summary.strip()
+
+        chat_histories[memory_key] = [
+            chat_histories[memory_key][0]
+        ] + chat_histories[memory_key][-10:]
+
+        ensure_history(memory_key, mode)
+
+    except Exception as e:
+        print(f"[WARN] No se pudo resumir memoria para {memory_key}: {e}")
 
 
 # ============================================================
@@ -422,6 +584,7 @@ def cmd_modo(message):
         f"⚙️ Modo detectado: `{mode}`\n"
         f"🧵 Thread ID: `{thread_id}`\n"
         f"🧠 Modelo asignado: `{model}`\n"
+        f"🪶 Modelo resumen: `{SUMMARY_MODEL}`\n"
         f"💾 Memoria: `{memory_key}`",
         parse_mode="Markdown"
     )
@@ -437,11 +600,40 @@ def cmd_reset(message):
     if memory_key in chat_histories:
         del chat_histories[memory_key]
 
+    if memory_key in chat_summaries:
+        del chat_summaries[memory_key]
+
+    if memory_key in message_counters:
+        del message_counters[memory_key]
+
     ensure_history(memory_key, mode)
 
     bot.reply_to(
         message,
-        "🧹 Memoria corta de este chat/tema reiniciada."
+        "🧹 Memoria corta y bitácora de este chat/tema reiniciadas."
+    )
+
+
+@bot.message_handler(commands=["bitacora"])
+def cmd_bitacora(message):
+    chat_id = message.chat.id
+    thread_id = get_thread_id(message)
+    memory_key = get_memory_key(chat_id, thread_id)
+
+    summary = chat_summaries.get(memory_key, "").strip()
+
+    if not summary:
+        bot.reply_to(
+            message,
+            "📜 Este chat/tema todavía no tiene bitácora resumida."
+        )
+        return
+
+    send_message_to_thread(
+        chat_id=chat_id,
+        thread_id=thread_id,
+        text=f"📜 Bitácora resumida:\n\n{summary}",
+        reply_to_message_id=message.message_id
     )
 
 
@@ -461,7 +653,7 @@ def handle_message(message):
     if user_text.startswith("/"):
         bot.reply_to(
             message,
-            "Comando no reconocido. Por ahora puedes usar: /id, /modo, /reset."
+            "Comando no reconocido. Por ahora puedes usar: /id, /modo, /reset, /bitacora."
         )
         return
 
@@ -496,6 +688,12 @@ def handle_message(message):
                 "content": bot_response
             }
         )
+
+        message_counters[memory_key] = message_counters.get(memory_key, 0) + 1
+
+        if mode in ["medieval", "politica", "friend", "simulacion", "assistant"]:
+            if message_counters[memory_key] % 8 == 0:
+                summarize_history(memory_key, mode)
 
         rotate_history(memory_key)
 
