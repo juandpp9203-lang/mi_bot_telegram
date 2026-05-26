@@ -26,10 +26,12 @@ THREAD_FRIEND = os.getenv("THREAD_FRIEND")
 THREAD_SIMULACION = os.getenv("THREAD_SIMULACION")
 
 # Modelos
-ROLE_MODEL = os.getenv("ROLE_MODEL", "sao10k/l3.3-euryale-70b")
-ASSISTANT_MODEL = os.getenv("ASSISTANT_MODEL", "meta-llama/llama-3.1-70b-instruct")
+ROLE_MODEL = os.getenv("ROLE_MODEL", "mistralai/mistral-small-creative")
+FRIEND_MODEL = os.getenv("FRIEND_MODEL", "gryphe/mythomax-l2-13b")
+ASSISTANT_MODEL = os.getenv("ASSISTANT_MODEL", "meta-llama/llama-3-8b-instruct")
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "meta-llama/llama-3-8b-instruct")
 SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", "meta-llama/llama-3-8b-instruct")
+PREMIUM_ROLE_MODEL = os.getenv("PREMIUM_ROLE_MODEL", "sao10k/l3.3-euryale-70b")
 
 # ============================================================
 # VALIDACIONES
@@ -104,7 +106,10 @@ def get_model_for_mode(mode):
     if mode == "assistant":
         return ASSISTANT_MODEL
 
-    if mode in ["medieval", "politica", "friend", "simulacion", "role_general"]:
+    if mode == "friend":
+        return FRIEND_MODEL
+
+    if mode in ["medieval", "politica", "simulacion", "role_general"]:
         return ROLE_MODEL
 
     return DEFAULT_MODEL
@@ -112,21 +117,21 @@ def get_model_for_mode(mode):
 
 def get_max_tokens_for_mode(mode):
     if mode == "medieval":
-        return 1000
+        return 750
 
     if mode == "politica":
-        return 950
+        return 700
 
     if mode == "friend":
-        return 550
+        return 350
 
     if mode == "simulacion":
-        return 1000
+        return 750
 
     if mode == "assistant":
-        return 450
+        return 300
 
-    return 600
+    return 500
 
 
 def get_temperature_for_mode(mode):
@@ -692,9 +697,9 @@ def handle_message(message):
         message_counters[memory_key] = message_counters.get(memory_key, 0) + 1
 
         if mode in ["medieval", "politica", "friend", "simulacion", "assistant"]:
-            if message_counters[memory_key] % 8 == 0:
-                summarize_history(memory_key, mode)
-
+        if message_counters[memory_key] % 6 == 0:
+        summarize_history(memory_key, mode)
+        
         rotate_history(memory_key)
 
         send_message_to_thread(
