@@ -29,6 +29,23 @@ def receive_update():
     else:
         return 'Invalid content type', 403
 
+@bot.message_handler(commands=['id'])
+def cmd_id(message):
+    chat_id = message.chat.id
+    thread_id = getattr(message, "message_thread_id", None)
+    chat_type = message.chat.type
+    title = getattr(message.chat, "title", None)
+
+    bot.reply_to(
+        message,
+        f"🆔 Datos de este chat:\n\n"
+        f"Chat ID: `{chat_id}`\n"
+        f"Thread ID: `{thread_id}`\n"
+        f"Tipo: `{chat_type}`\n"
+        f"Nombre: `{title}`",
+        parse_mode="Markdown"
+    )
+
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
     chat_id = message.chat.id
