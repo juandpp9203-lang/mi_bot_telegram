@@ -697,8 +697,8 @@ def handle_message(message):
         message_counters[memory_key] = message_counters.get(memory_key, 0) + 1
 
         if mode in ["medieval", "politica", "friend", "simulacion", "assistant"]:
-        if message_counters[memory_key] % 6 == 0:
-        summarize_history(memory_key, mode)
+            if message_counters[memory_key] % 6 == 0:
+                summarize_history(memory_key, mode)
         
         rotate_history(memory_key)
 
