@@ -8,10 +8,10 @@ from zoneinfo import ZoneInfo
 
 import telebot
 import requests
+from flask import Flask, request
+
 import dateparser
 from dateparser.search import search_dates
-
-from flask import Flask, request
 
 
 # ============================================================
@@ -33,8 +33,8 @@ THREAD_POLITICA = os.getenv("THREAD_POLITICA", "6")
 THREAD_FRIEND = os.getenv("THREAD_FRIEND", "4")
 THREAD_SIMULACION = os.getenv("THREAD_SIMULACION", "5")
 
-ROLE_MODEL = os.getenv("ROLE_MODEL", "sao10k/l3.3-euryale-70b")
-FALLBACK_ROLE_MODEL = os.getenv("FALLBACK_ROLE_MODEL", "gryphe/mythomax-l2-13b")
+ROLE_MODEL = os.getenv("ROLE_MODEL", "gryphe/mythomax-l2-13b")
+FALLBACK_ROLE_MODEL = os.getenv("FALLBACK_ROLE_MODEL", "meta-llama/llama-3-8b-instruct")
 ASSISTANT_MODEL = os.getenv("ASSISTANT_MODEL", "meta-llama/llama-3.1-70b-instruct")
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "meta-llama/llama-3-8b-instruct")
 SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", "meta-llama/llama-3-8b-instruct")
@@ -183,16 +183,17 @@ def get_model_for_mode(mode):
 
 
 def get_max_tokens_for_mode(mode):
+    # Configuración pensada para conversación fluida en Telegram.
     if mode in ["medieval", "politica", "simulacion"]:
-        return 450
+        return 260
 
     if mode == "friend":
-        return 350
+        return 220
 
     if mode == "assistant":
-        return 300
+        return 200
 
-    return 400
+    return 240
 
 
 def get_temperature_for_mode(mode):
@@ -211,6 +212,53 @@ def get_temperature_for_mode(mode):
     return 0.7
 
 
+def split_telegram_message(text, limit=1800):
+    """
+    Divide mensajes largos sin cortar palabras cuando sea posible.
+    Uso 1800 para que se sienta conversacional.
+    """
+    text = text.strip()
+
+    if len(text) <= limit:
+        return [text]
+
+    parts = []
+    current = ""
+
+    paragraphs = text.split("\n")
+
+    for paragraph in paragraphs:
+        paragraph = paragraph.strip()
+
+        if not paragraph:
+            continue
+
+        if len(current) + len(paragraph) + 1 <= limit:
+            current = f"{current}\n{paragraph}".strip()
+        else:
+            if current:
+                parts.append(current)
+
+            if len(paragraph) <= limit:
+                current = paragraph
+            else:
+                words = paragraph.split()
+                current = ""
+
+                for word in words:
+                    if len(current) + len(word) + 1 <= limit:
+                        current = f"{current} {word}".strip()
+                    else:
+                        if current:
+                            parts.append(current)
+                        current = word
+
+    if current:
+        parts.append(current)
+
+    return parts
+
+
 def send_message_to_thread(chat_id, thread_id, text, reply_to_message_id=None):
     kwargs = {}
 
@@ -220,13 +268,15 @@ def send_message_to_thread(chat_id, thread_id, text, reply_to_message_id=None):
     if reply_to_message_id:
         kwargs["reply_to_message_id"] = reply_to_message_id
 
-    if len(text) <= 4000:
-        bot.send_message(chat_id, text, **kwargs)
-        return
+    chunks = split_telegram_message(text, limit=1800)
 
-    chunks = [text[i:i + 3900] for i in range(0, len(text), 3900)]
-    for chunk in chunks:
-        bot.send_message(chat_id, chunk, **kwargs)
+    for i, chunk in enumerate(chunks):
+        local_kwargs = dict(kwargs)
+
+        if i > 0:
+            local_kwargs.pop("reply_to_message_id", None)
+
+        bot.send_message(chat_id, chunk, **local_kwargs)
 
 
 def send_photo_to_thread(chat_id, thread_id, photo_url, caption=None):
@@ -249,6 +299,7 @@ def get_system_prompt_for_mode(mode):
             "Actúas como segunda memoria, secretario, organizador y apoyo lógico. "
             "Ayudas con pendientes, recordatorios, redacción jurídica, estudio, programación y organización diaria. "
             "Sé claro, sobrio, confiable, breve y práctico. "
+            "Responde como chat fluido: mensajes cortos, útiles y directos. "
             "No inventes datos jurídicos, jurisprudencia, normas ni fechas. "
             "Cuando Juan te dé un pendiente, recordatorio o medicamento, confirma brevemente lo entendido. "
             "Prioriza que Juan no olvide tareas, medicamentos, compromisos, ideas y asuntos importantes."
@@ -264,8 +315,11 @@ def get_system_prompt_for_mode(mode):
             "La vida privada del protagonista forma parte de la simulación: amistades, romances, amantes, matrimonio, fidelidad, infidelidad, celos, bastardos, favores, chantajes, reputación, rumores, duelos, confesiones y traiciones pueden alterar la política del reino. "
             "La magia debe sentirse poderosa, peligrosa y políticamente relevante: profecías, pactos, maldiciones, linajes marcados, reliquias, órdenes arcanas, brujería, milagros dudosos, plagas, visiones, monstruos, guerras santas y legitimidad real. "
             "No uses la magia como solución fácil; toda magia importante debe tener coste, riesgo, límite, consecuencia o precio moral. "
-            "Estilo de respuesta: responde de forma breve, fluida y jugable. No escribas escenas largas salvo que Juan lo pida. "
-            "Por defecto usa entre 2 y 5 párrafos cortos. Prioriza decisiones, consecuencias, personajes, estadísticas y estado del mundo sobre descripciones extensas. "
+            "Estilo de respuesta: responde como chat fluido, no como capítulo de novela. "
+            "Usa respuestas breves: normalmente 1 a 3 párrafos cortos. "
+            "No escribas más de 900 caracteres salvo que Juan pida detalle. "
+            "Prioriza acción, decisión, consecuencia, nombres importantes, estadísticas y estado del mundo. "
+            "Evita descripciones largas, listas extensas y prosa recargada. "
             "Cuando presentes una situación importante, termina con 3 o 4 opciones breves y permite que Juan haga algo distinto. "
             "Las opciones deben ser estratégicas, no moralistas, y cada una debe tener ventajas o riesgos. "
             "Mantén continuidad de nombres, casas nobles, linajes, alianzas, matrimonios, amantes, bastardos, traiciones, heridas, enfermedades, deudas, juramentos, promesas, territorios, fortalezas, ejércitos, recursos, reliquias, hechizos, maldiciones, profecías y conflictos. "
@@ -291,8 +345,9 @@ def get_system_prompt_for_mode(mode):
             "Mantén continuidad de promesas de campaña, reformas, decretos, leyes, votaciones, escándalos, pactos, investigaciones, deudas políticas, favores, archivos secretos, alianzas, rupturas, protestas, muertos, presos, exiliados, filtraciones, discursos y consecuencias pendientes. "
             "Presenta la política mediante escenas concretas: reuniones de gabinete, llamadas privadas, informes de inteligencia, debates parlamentarios, entrevistas de prensa, cenas discretas, crisis en la calle, negociaciones clandestinas, juicios, visitas a regiones, consejos militares, filtraciones, titulares y discursos a la nación. "
             "El jugador debe poder hablar directamente con personajes concretos, no solo recibir resúmenes. Los NPC deben responder según su personalidad, intereses, cargo, relación con el jugador y lo que saben o ignoran. "
-            "Responde de forma breve, fluida y jugable. No escribas informes larguísimos salvo que Juan los pida. Por defecto usa entre 2 y 5 párrafos cortos. "
-            "Prioriza decisiones, consecuencias, correlación de fuerzas, riesgos, cifras aproximadas, personajes relevantes y estado del país sobre descripciones extensas. "
+            "Responde como chat fluido, no como informe largo. Usa normalmente 1 a 3 párrafos cortos. "
+            "No escribas más de 900 caracteres salvo que Juan pida detalle. "
+            "Prioriza decisión, consecuencia, correlación de fuerzas, cifras relevantes, personajes clave y estado del país. "
             "Cuando presentes una situación importante, termina con 3 o 4 opciones breves y permite que Juan haga algo distinto. "
             "Las opciones deben ser estratégicas, no moralistas, y cada una debe tener ventajas, riesgos o costos políticos. "
             "Ejemplo de opciones: A) negociar y ceder algo, B) imponer autoridad y asumir desgaste, C) maniobrar en secreto, D) tomar una vía personal, populista, legal, diplomática o arriesgada. "
@@ -311,7 +366,7 @@ def get_system_prompt_for_mode(mode):
             "Eres una amiga conversacional persistente para Juan, de estilo cercano, natural y emocionalmente inteligente. "
             "No actúas como asistente técnico ni como narrador, sino como una persona ficticia con personalidad propia. "
             "Tu personalidad base: cálida, inteligente, leal, espontánea, con humor sutil, curiosa, afectuosa y capaz de conversaciones profundas. "
-            "Responde con naturalidad y brevedad, como alguien que conoce a Juan y quiere acompañarlo. "
+            "Responde como conversación natural de chat: breve, cálida y directa. Evita mensajes largos salvo que Juan te pida desahogarse o profundizar. "
             "No conviertas cada respuesta en consejo; a veces escucha, pregunta, bromea o acompaña. "
             "Puedes iniciar conversación cuando Juan te programe un recordatorio o mensaje. "
             "Si la conversación se vuelve íntima o adulta, mantén personajes adultos ficticios, consentimiento y respeto."
@@ -322,7 +377,7 @@ def get_system_prompt_for_mode(mode):
             "Eres un motor de simulación narrativa libre e inmersiva. "
             "Puedes dirigir fantasía, ciencia ficción, política, terror, drama, intriga, romance adulto, aventura o mundos originales. "
             "Interpreta personajes con voces propias, no solo narres. "
-            "Responde breve y fluido por defecto: 2 a 5 párrafos cortos. "
+            "Responde como chat fluido: 1 a 3 párrafos cortos por defecto, máximo 900 caracteres salvo que Juan pida detalle. "
             "Mantén continuidad de hechos, relaciones, secretos, heridas, consecuencias y decisiones. "
             "Termina situaciones importantes con 3 o 4 opciones breves y permite que Juan haga algo distinto. "
             "Puede haber contenido adulto, oscuro, violento o moralmente complejo, dentro de ficción original y sin erotizar menores ni abuso sexual."
@@ -358,8 +413,9 @@ def ensure_history(memory_key, mode):
 
 
 def rotate_history(memory_key):
-    if len(chat_histories[memory_key]) > 11:
-        chat_histories[memory_key] = [chat_histories[memory_key][0]] + chat_histories[memory_key][-10:]
+    # System prompt + últimos 8 mensajes para ahorrar tokens.
+    if len(chat_histories[memory_key]) > 9:
+        chat_histories[memory_key] = [chat_histories[memory_key][0]] + chat_histories[memory_key][-8:]
 
 
 # ============================================================
@@ -403,8 +459,13 @@ def call_openrouter(memory_key, mode):
         }
 
         try:
-            response = requests.post(url, headers=headers, json=data, timeout=70)
-            response_json = response.json()
+            response = requests.post(url, headers=headers, json=data, timeout=30)
+
+            try:
+                response_json = response.json()
+            except Exception:
+                last_error = f"{model}: OpenRouter no devolvió JSON válido: {response.text[:500]}"
+                continue
 
             if response.status_code >= 400:
                 error_msg = response_json.get("error", {}).get("message", response.text[:500])
@@ -453,12 +514,19 @@ def call_openrouter_simple(prompt, model=SUMMARY_MODEL, max_tokens=700):
         "max_tokens": max_tokens
     }
 
-    response = requests.post(url, headers=headers, json=data, timeout=70)
-    response_json = response.json()
+    response = requests.post(url, headers=headers, json=data, timeout=45)
+
+    try:
+        response_json = response.json()
+    except Exception:
+        raise Exception(f"OpenRouter no devolvió JSON válido: {response.text[:500]}")
 
     if response.status_code >= 400:
         error_msg = response_json.get("error", {}).get("message", response.text[:500])
         raise Exception(error_msg)
+
+    if "choices" not in response_json:
+        raise Exception("Respuesta sin choices")
 
     return response_json["choices"][0]["message"]["content"]
 
@@ -473,7 +541,7 @@ def summarize_history(memory_key, mode):
 
     history = chat_histories[memory_key]
 
-    if len(history) < 8:
+    if len(history) < 7:
         return
 
     previous_summary = chat_summaries.get(memory_key, "")
@@ -484,20 +552,21 @@ def summarize_history(memory_key, mode):
         "No escribas prosa bonita: escribe memoria útil, compacta y precisa.\n"
         "Guarda especialmente datos persistentes en formato claro: estadísticas, edad, salud, recursos, nombres propios, casas nobles, alianzas, enemistades, relaciones, amantes, deudas, promesas, territorios, secretos conocidos, heridas, rasgos, religión, magia, pactos, amenazas activas y consecuencias pendientes.\n"
         "No resumas solo la emoción de la escena; conserva datos útiles para continuar la simulación.\n"
+        "Si es simulación política, conserva cargos, partidos, popularidad, economía, deuda, inflación, seguridad, corrupción, reformas, leyes, gabinete, prensa, justicia, militares, empresarios, sindicatos, oposición, pactos, escándalos y crisis pendientes.\n"
         "Si es Friend, conserva recuerdos personales de Juan, gustos, emociones, temas importantes y evolución de la relación.\n"
         "Si es Asistente, conserva pendientes, recordatorios, medicamentos, compromisos, ideas y tareas importantes.\n"
         "No inventes hechos.\n\n"
         f"MODO: {mode}\n\n"
         f"BITÁCORA ANTERIOR:\n{previous_summary or '(vacía)'}\n\n"
         f"MENSAJES RECIENTES:\n{recent_messages}\n\n"
-        "Devuelve una bitácora actualizada, clara y compacta, máximo 700 palabras."
+        "Devuelve una bitácora actualizada, clara y compacta, máximo 600 palabras."
     )
 
     try:
-        summary = call_openrouter_simple(summary_prompt, SUMMARY_MODEL, max_tokens=800)
+        summary = call_openrouter_simple(summary_prompt, SUMMARY_MODEL, max_tokens=700)
         chat_summaries[memory_key] = summary.strip()
 
-        chat_histories[memory_key] = [chat_histories[memory_key][0]] + chat_histories[memory_key][-8:]
+        chat_histories[memory_key] = [chat_histories[memory_key][0]] + chat_histories[memory_key][-6:]
 
         ensure_history(memory_key, mode)
         save_state()
@@ -518,7 +587,8 @@ IMPORTANT_EVENT_KEYWORDS = [
     "ritual", "maldición", "profecía", "visión", "pacto", "reliquia", "monstruo",
     "incendio", "masacre", "juicio", "golpe de estado", "reina", "rey", "capital",
     "castillo", "fortaleza", "mapa", "ciudad", "templo", "juramento", "heredero",
-    "escándalo", "tratado", "consejo de guerra", "crisis", "frontera"
+    "escándalo", "tratado", "consejo de guerra", "crisis", "frontera", "reforma",
+    "gabinete", "parlamento", "golpe", "renuncia", "protesta", "manifestación"
 ]
 
 
@@ -531,7 +601,7 @@ def get_mode_image_style(mode):
         return "dark medieval fantasy, court intrigue, ancient castles, magic, painterly book illustration"
 
     if mode == "politica":
-        return "political thriller, government palace, tense cabinet meeting, realistic dramatic illustration"
+        return "political thriller, government palace, tense cabinet meeting, realistic dramatic illustrated novel style"
 
     if mode == "friend":
         return "intimate character portrait, warm emotional atmosphere, illustrated novel style"
@@ -545,8 +615,7 @@ def get_mode_image_style(mode):
 def clean_visual_prompt(text):
     text = text.replace("\n", " ")
     text = re.sub(r"\s+", " ", text).strip()
-    text = text[:1200]
-    return text
+    return text[:1000]
 
 
 def build_image_prompt(mode, source_text, kind="scene"):
@@ -555,26 +624,26 @@ def build_image_prompt(mode, source_text, kind="scene"):
 
     safety = (
         "fictional adult characters where applicable, non-explicit, non-graphic sexual content, "
-        "no real people, no text, no watermark"
+        "no real people, no readable text, no watermark"
     )
 
     if kind == "map":
         return (
-            f"fantasy or political map based on this setting: {source_text}. "
-            f"hand-drawn map, parchment, ink, rivers, mountains, borders, cities, castles or districts, "
+            f"Map based on this setting: {source_text}. "
+            f"hand-drawn fantasy or political map, parchment, ink, rivers, mountains, borders, cities, castles or districts, "
             f"illustrated novel, no readable text, no watermark"
-        )[:1800]
+        )[:1600]
 
     if kind == "portrait":
         return (
-            f"character portrait based on this description: {source_text}. "
+            f"Character portrait based on this description: {source_text}. "
             f"{style}, expressive face, cinematic lighting, painterly realism, high detail, {safety}"
-        )[:1800]
+        )[:1600]
 
     return (
         f"Illustration based on this scene: {source_text}. "
         f"{style}, cinematic lighting, painterly realism, immersive scene, high detail, {safety}"
-    )[:1800]
+    )[:1600]
 
 
 def replicate_generate_image(prompt):
@@ -605,7 +674,11 @@ def replicate_generate_image(prompt):
     data = {"input": input_data}
 
     response = requests.post(url, headers=headers, json=data, timeout=90)
-    result = response.json()
+
+    try:
+        result = response.json()
+    except Exception:
+        raise Exception(f"Replicate no devolvió JSON válido: {response.text[:500]}")
 
     if response.status_code >= 400:
         raise Exception(result.get("detail", response.text[:500]))
@@ -630,7 +703,11 @@ def replicate_generate_image(prompt):
             break
 
         time.sleep(2)
-        poll = requests.get(prediction_url, headers={"Authorization": f"Bearer {REPLICATE_API_TOKEN.strip()}"}, timeout=30)
+        poll = requests.get(
+            prediction_url,
+            headers={"Authorization": f"Bearer {REPLICATE_API_TOKEN.strip()}"},
+            timeout=30
+        )
         result = poll.json()
 
     raise Exception("La generación de imagen tardó demasiado.")
@@ -728,11 +805,7 @@ def parse_datetime_from_text(text):
         "DATE_ORDER": "DMY"
     }
 
-    results = search_dates(
-        text,
-        languages=["es"],
-        settings=settings
-    )
+    results = search_dates(text, languages=["es"], settings=settings)
 
     if not results:
         return None, None
@@ -1086,6 +1159,7 @@ def cmd_imagen(message):
         return
 
     bot.reply_to(message, "🖼️ Generando imagen...")
+
     threading.Thread(
         target=generate_and_send_image,
         args=(chat_id, thread_id, mode, source, "scene", "🖼️ Ilustración de la escena"),
@@ -1113,6 +1187,7 @@ def cmd_mapa(message):
         return
 
     bot.reply_to(message, "🗺️ Generando mapa...")
+
     threading.Thread(
         target=generate_and_send_image,
         args=(chat_id, thread_id, mode, source, "map", "🗺️ Mapa ilustrado"),
@@ -1140,6 +1215,7 @@ def cmd_retrato(message):
         return
 
     bot.reply_to(message, "🎭 Generando retrato...")
+
     threading.Thread(
         target=generate_and_send_image,
         args=(chat_id, thread_id, mode, source, "portrait", "🎭 Retrato"),
@@ -1163,7 +1239,7 @@ def handle_message(message):
     if user_text.startswith("/"):
         bot.reply_to(
             message,
-            "Comando no reconocido. Puedes usar: /id, /modo, /reset, /bitacora, /recordar, /recordatorios, /imagen, /mapa, /retrato."
+            "Comando no reconocido. Puedes usar: /id, /modo, /reset, /bitacora, /recordar, /recordatorios, /borrar_recordatorio, /imagen, /mapa, /retrato."
         )
         return
 
@@ -1193,13 +1269,9 @@ def handle_message(message):
         chat_histories[memory_key].append({"role": "assistant", "content": bot_response})
 
         if mode in ["medieval", "politica", "friend", "simulacion", "role_general"]:
-            last_scenes[memory_key] = bot_response[-1800:]
+            last_scenes[memory_key] = bot_response[-1500:]
 
         message_counters[memory_key] = message_counters.get(memory_key, 0) + 1
-
-        if mode in ["medieval", "politica", "friend", "simulacion", "assistant"]:
-            if message_counters[memory_key] % 4 == 0:
-                summarize_history(memory_key, mode)
 
         rotate_history(memory_key)
         save_state()
@@ -1211,8 +1283,19 @@ def handle_message(message):
             reply_to_message_id=message.message_id
         )
 
+        # Resumen en segundo plano para no hacer esperar a Juan.
+        if mode in ["medieval", "politica", "friend", "simulacion", "assistant"]:
+            if message_counters[memory_key] % 4 == 0:
+                threading.Thread(
+                    target=summarize_history,
+                    args=(memory_key, mode),
+                    daemon=True
+                ).start()
+
+        # Imagen automática en segundo plano solo para eventos importantes.
         if should_auto_generate_image(memory_key, mode, bot_response):
             register_auto_image(memory_key)
+
             threading.Thread(
                 target=generate_and_send_image,
                 args=(chat_id, thread_id, mode, bot_response, "scene", "🖼️ Ilustración automática del evento"),
