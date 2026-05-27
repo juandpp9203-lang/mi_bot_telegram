@@ -48,10 +48,19 @@ IMAGE_STYLE = os.getenv(
     "illustrated novel style, cinematic lighting, painterly realism, immersive scene, high detail, no text"
 )
 
-AUTO_IMAGES_ENABLED = os.getenv("AUTO_IMAGES_ENABLED", "true").lower() == "true"
+AAUTO_IMAGES_ENABLED = os.getenv("AUTO_IMAGES_ENABLED", "false").lower() == "true"
 AUTO_IMAGE_MIN_MINUTES = int(os.getenv("AUTO_IMAGE_MIN_MINUTES", "10"))
 AUTO_IMAGE_MAX_PER_HOUR = int(os.getenv("AUTO_IMAGE_MAX_PER_HOUR", "3"))
 AUTO_IMAGE_MAX_PER_DAY = int(os.getenv("AUTO_IMAGE_MAX_PER_DAY", "8"))
+
+ROLE_MAX_TOKENS = int(os.getenv("ROLE_MAX_TOKENS", "380"))
+FRIEND_MAX_TOKENS = int(os.getenv("FRIEND_MAX_TOKENS", "260"))
+ASSISTANT_MAX_TOKENS = int(os.getenv("ASSISTANT_MAX_TOKENS", "260"))
+DEFAULT_MAX_TOKENS = int(os.getenv("DEFAULT_MAX_TOKENS", "320"))
+
+OPENROUTER_TIMEOUT = int(os.getenv("OPENROUTER_TIMEOUT", "30"))
+SUMMARY_EVERY_N_MESSAGES = int(os.getenv("SUMMARY_EVERY_N_MESSAGES", "4"))
+RECENT_MESSAGES_TO_KEEP = int(os.getenv("RECENT_MESSAGES_TO_KEEP", "8"))
 
 STATE_FILE = os.getenv("STATE_FILE", "state.json")
 
@@ -183,17 +192,17 @@ def get_model_for_mode(mode):
 
 
 def get_max_tokens_for_mode(mode):
-    # Configuración pensada para conversación fluida en Telegram.
-    if mode in ["medieval", "politica", "simulacion"]:
-        return 260
+    # Límite suficiente para no cortar respuestas, manteniendo fluidez.
+    if mode in ["medieval", "politica", "simulacion", "role_general"]:
+        return ROLE_MAX_TOKENS
 
     if mode == "friend":
-        return 220
+        return FRIEND_MAX_TOKENS
 
     if mode == "assistant":
-        return 200
+        return ASSISTANT_MAX_TOKENS
 
-    return 240
+    return DEFAULT_MAX_TOKENS
 
 
 def get_temperature_for_mode(mode):
@@ -413,10 +422,11 @@ def ensure_history(memory_key, mode):
 
 
 def rotate_history(memory_key):
-    # System prompt + últimos 8 mensajes para ahorrar tokens.
-    if len(chat_histories[memory_key]) > 9:
-        chat_histories[memory_key] = [chat_histories[memory_key][0]] + chat_histories[memory_key][-8:]
+    # System prompt + últimos mensajes configurables para ahorrar tokens.
+    keep = max(4, RECENT_MESSAGES_TO_KEEP)
 
+    if len(chat_histories[memory_key]) > keep + 1:
+        chat_histories[memory_key] = [chat_histories[memory_key][0]] + chat_histories[memory_key][-keep:]
 
 # ============================================================
 # OPENROUTER
@@ -459,7 +469,7 @@ def call_openrouter(memory_key, mode):
         }
 
         try:
-            response = requests.post(url, headers=headers, json=data, timeout=30)
+            response = requests.post(url, headers=headers, json=data, timeout=OPENROUTER_TIMEOUT)
 
             try:
                 response_json = response.json()
@@ -514,7 +524,7 @@ def call_openrouter_simple(prompt, model=SUMMARY_MODEL, max_tokens=700):
         "max_tokens": max_tokens
     }
 
-    response = requests.post(url, headers=headers, json=data, timeout=45)
+    response = requests.post(url, headers=headers, json=data, timeout=OPENROUTER_TIMEOUT)
 
     try:
         response_json = response.json()
@@ -559,7 +569,18 @@ def summarize_history(memory_key, mode):
         f"MODO: {mode}\n\n"
         f"BITÁCORA ANTERIOR:\n{previous_summary or '(vacía)'}\n\n"
         f"MENSAJES RECIENTES:\n{recent_messages}\n\n"
-        "Devuelve una bitácora actualizada, clara y compacta, máximo 600 palabras."
+        "Devuelve una bitácora estructurada y compacta con secciones si aplican:\n"
+        "1. Protagonista y estadísticas\n"
+        "2. Personajes importantes\n"
+        "3. Relaciones y lealtades\n"
+        "4. Facciones, casas, partidos o instituciones\n"
+        "5. Lugares y territorios\n"
+        "6. Secretos, pactos, deudas, juramentos y rumores\n"
+        "7. Decisiones importantes tomadas por Juan\n"
+        "8. Consecuencias pendientes\n"
+        "9. Amenazas activas\n"
+        "10. Línea de tiempo breve\n"
+        "Máximo 700 palabras. No inventes hechos."
     )
 
     try:
@@ -1285,7 +1306,7 @@ def handle_message(message):
 
         # Resumen en segundo plano para no hacer esperar a Juan.
         if mode in ["medieval", "politica", "friend", "simulacion", "assistant"]:
-            if message_counters[memory_key] % 4 == 0:
+            if message_counters[memory_key] % SUMMARY_EVERY_N_MESSAGES == 0:
                 threading.Thread(
                     target=summarize_history,
                     args=(memory_key, mode),
