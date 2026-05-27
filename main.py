@@ -48,7 +48,7 @@ IMAGE_STYLE = os.getenv(
     "illustrated novel style, cinematic lighting, painterly realism, immersive scene, high detail, no text"
 )
 
-AAUTO_IMAGES_ENABLED = os.getenv("AUTO_IMAGES_ENABLED", "false").lower() == "true"
+AUTO_IMAGES_ENABLED = os.getenv("AUTO_IMAGES_ENABLED", "false").lower() == "true"
 AUTO_IMAGE_MIN_MINUTES = int(os.getenv("AUTO_IMAGE_MIN_MINUTES", "10"))
 AUTO_IMAGE_MAX_PER_HOUR = int(os.getenv("AUTO_IMAGE_MAX_PER_HOUR", "3"))
 AUTO_IMAGE_MAX_PER_DAY = int(os.getenv("AUTO_IMAGE_MAX_PER_DAY", "8"))
